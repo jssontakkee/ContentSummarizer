@@ -6,6 +6,7 @@ from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+# Corrected import for youtube-transcript-api exceptions
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptAvailable
 import re
@@ -16,7 +17,9 @@ import random
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Predefined API Key - Replace with your actual Groq API key
+# --- IMPORTANT ---
+# Replace with your actual Groq API key before deployment if needed
+# Keep the placeholder if you intend for users to enter it, but the code currently uses this variable directly.
 GROQ_API_KEY = "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"  # Replace this with your actual API key
 
 # Define function to extract YouTube ID from URL
@@ -33,15 +36,14 @@ def extract_youtube_id(url):
             return match.group(1)
     return None
 
-# Function to get YouTube transcript with improved error handling
+# Function to get YouTube transcript with improved error handling and corrected exceptions
 def get_youtube_transcript(video_id):
     try:
         # Get the list of available transcripts
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
-        # First try to get English auto-generated transcript
+        # First try to get English transcript
         try:
-            # Try to get the English transcript directly
             transcript = transcript_list.find_transcript(['en'])
             st.markdown("""
             <div class="success-message">
@@ -66,7 +68,17 @@ def get_youtube_transcript(video_id):
                 """, unsafe_allow_html=True)
 
                 # Translate to English
+                st.markdown("""
+                <div class="info-message">
+                    <span>⏳ Translating Hindi transcript to English...</span>
+                </div>
+                """, unsafe_allow_html=True)
                 translated_transcript = transcript.translate('en').fetch()
+                st.markdown("""
+                <div class="success-message">
+                    <span>✅ Translation complete!</span>
+                </div>
+                """, unsafe_allow_html=True)
                 return " ".join([t['text'] for t in translated_transcript])
             except NoTranscriptAvailable:
                 # If neither English nor Hindi available, try any available language
@@ -75,91 +87,100 @@ def get_youtube_transcript(video_id):
                     <span>ℹ️ Hindi transcript not available. Trying other languages...</span>
                 </div>
                 """, unsafe_allow_html=True)
+                available_languages = [t.language for t in transcript_list]
+                st.markdown(f"""
+                <div class="info-message">
+                    <span>ℹ️ Available languages: {', '.join(available_languages)}</span>
+                </div>
+                """, unsafe_allow_html=True)
 
-                # Get the first available transcript (any language)
                 try:
-                    # Get the first generated transcript
-                    for transcript in transcript_list:
+                    # Iterate through available transcripts
+                    for available_transcript in transcript_list:
+                        lang = available_transcript.language
+                        lang_code = available_transcript.language_code
+                        st.markdown(f"""
+                        <div class="info-message">
+                            <span>ℹ️ Found {lang} ({lang_code}) transcript. Processing...</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         try:
-                            lang = transcript.language
-                            st.markdown(f"""
-                            <div class="info-message">
-                                <span>ℹ️ Found {lang} transcript. Translating to English if needed...</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-
                             # Translate to English if not already English
-                            if transcript.language_code != 'en':
-                                translated = transcript.translate('en').fetch()
+                            if lang_code != 'en':
+                                st.markdown(f"""
+                                <div class="info-message">
+                                    <span>⏳ Translating {lang} transcript to English...</span>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                translated = available_transcript.translate('en').fetch()
+                                st.markdown("""
+                                <div class="success-message">
+                                    <span>✅ Translation complete!</span>
+                                </div>
+                                """, unsafe_allow_html=True)
                                 return " ".join([t['text'] for t in translated])
                             else:
-                                fetched = transcript.fetch()
+                                fetched = available_transcript.fetch()
                                 return " ".join([t['text'] for t in fetched])
                         except Exception as lang_error:
                             st.markdown(f"""
                             <div class="error-message">
-                                <span>⚠️ Error with {transcript.language} transcript: {str(lang_error)}</span>
+                                <span>⚠️ Error processing {lang} transcript: {str(lang_error)}. Trying next...</span>
                             </div>
                             """, unsafe_allow_html=True)
-                            continue
-                except Exception as e:
-                    st.markdown(f"""
+                            continue # Try the next available language
+
+                    # If loop finishes without returning, no usable transcript found
+                    st.markdown("""
                     <div class="error-message">
-                        <span>❌ Error finding any transcript: {str(e)}</span>
+                        <span>❌ No usable transcripts found after trying all available languages.</span>
                     </div>
                     """, unsafe_allow_html=True)
                     return None
 
+                except Exception as e:
+                    st.markdown(f"""
+                    <div class="error-message">
+                        <span>❌ Error iterating through available transcripts: {str(e)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    return None
+
+    except TranscriptsDisabled:
         st.markdown("""
         <div class="error-message">
-            <span>❌ No usable transcripts found after trying all available languages.</span>
+            <span>❌ Transcripts are disabled for this video.</span>
         </div>
         """, unsafe_allow_html=True)
         return None
+    except NoTranscriptAvailable:
+         # This case might be hit if list_transcripts works but find_transcript fails unexpectedly later
+         st.markdown("""
+            <div class="error-message">
+                <span>❌ No transcript was found for this video, even after checking available languages.</span>
+            </div>
+            """, unsafe_allow_html=True)
+         return None
     except Exception as e:
-        # Show helpful error message with available languages
+        # Catch-all for other potential errors (network issues, API errors)
+        st.markdown(f"""
+        <div class="error-message">
+            <span>❌ An unexpected error occurred while fetching transcripts: {str(e)}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        # Optionally try to list languages from the error if it follows the known pattern
         if "For this video" in str(e):
-            st.markdown(f"""
-            <div class="error-message">
-                <span>❌ Error accessing transcripts: {str(e)}</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Extract available languages from error message
-            error_msg = str(e)
-            available_langs = re.findall(r'\* ([a-z\-]+) \("([^"]+)"\)', error_msg)
-
-            if available_langs:
-                st.markdown("""
-                <div class="info-message">
-                    <span>ℹ️ Available languages detected in error message:</span>
-                </div>
-                """, unsafe_allow_html=True)
-                # Find the English option
-                english_option = next((code for code, name in available_langs if code == 'en'), None)
-                if english_option:
-                    st.markdown("""
-                    <div class="info-message">
-                        <span>ℹ️ English transcript is available. Trying to fetch directly...</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    try:
-                        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-                        return " ".join([t['text'] for t in transcript])
-                    except Exception as direct_error:
-                        st.markdown(f"""
-                        <div class="error-message">
-                            <span>❌ Error fetching English transcript directly: {str(direct_error)}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="error-message">
-                <span>❌ Error accessing transcripts: {str(e)}</span>
-            </div>
-            """, unsafe_allow_html=True)
-
+             error_msg = str(e)
+             available_langs = re.findall(r'\* ([a-z\-]+) \("([^"]+)"\)', error_msg)
+             if available_langs:
+                 lang_codes = [code for code, name in available_langs]
+                 st.markdown(f"""
+                 <div class="info-message">
+                    <span>ℹ️ Detected available language codes in error: {', '.join(lang_codes)}</span>
+                 </div>
+                 """, unsafe_allow_html=True)
         return None
+
 
 # Custom CSS to make the UI more modern with glassmorphic effect
 st.set_page_config(
@@ -485,27 +506,27 @@ st.markdown("""
     .stTextInput > div > div > input {
         background-color: rgba(255, 255, 255, 0.2);
         border: 1px solid rgba(255, 255, 255, 0.18);
-        color: black !important; /* CHANGE: Text color to black */
+        color: black !important; /* Text color to black */
         border-radius: 10px;
         padding: 15px;
         backdrop-filter: blur(5px);
     }
 
     .stTextInput > div > div > input::placeholder {
-        color: rgba(0, 0, 0, 0.5); /* CHANGE: Darker placeholder */
+        color: rgba(0, 0, 0, 0.5); /* Darker placeholder */
     }
 
     /* Custom styling for select boxes */
     .stSelectbox > div > div > div {
         background-color: rgba(255, 255, 255, 0.2);
         border: 1px solid rgba(255, 255, 255, 0.18);
-        color: black !important; /* CHANGE: Text color to black */
+        color: black !important; /* Text color to black */
         border-radius: 10px;
         backdrop-filter: blur(5px);
     }
     /* Style for dropdown arrow */
     .stSelectbox svg {
-        fill: black !important; /* CHANGE: Arrow color to black */
+        fill: black !important; /* Arrow color to black */
     }
     /* Style for dropdown options */
     div[data-baseweb="popover"] ul li {
@@ -592,12 +613,12 @@ with col2:
 
     # Summary length slider
     max_tokens = st.slider(
-        "Summary Length",
+        "Summary Length (Max Tokens)",
         min_value=300,
         max_value=1200,
         value=600,
         step=100,
-        help="Adjust the level of detail in your summary"
+        help="Adjust the maximum detail level in your summary"
     )
 
     # Display info about the summary length
@@ -620,25 +641,30 @@ with col2:
     """, unsafe_allow_html=True)
 
     # Display API status
-    if GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE" and not GROQ_API_KEY.startswith("gsk_"): # Basic check
+    # Basic check if the key looks like a Groq key (starts with gsk_)
+    # Avoid displaying the key itself
+    is_api_key_present = GROQ_API_KEY and GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE" # Check if it's not empty or the placeholder
+    is_api_key_plausible = is_api_key_present and GROQ_API_KEY.startswith("gsk_")
+
+    if not is_api_key_present:
+        st.markdown("""
+        <div class="error-message" style="background-color: rgba(248, 215, 218, 0.4);">
+            <span style="font-weight: bold; color: white;">⚠️ API Key Missing</span><br>
+            <span style="color: white; opacity: 0.9;">Update the GROQ_API_KEY variable</span>
+        </div>
+        """, unsafe_allow_html=True)
+    elif not is_api_key_plausible:
          st.markdown("""
         <div class="error-message" style="background-color: rgba(248, 215, 218, 0.4);">
             <span style="font-weight: bold; color: white;">⚠️ API Key Invalid Format</span><br>
             <span style="color: white; opacity: 0.9;">Groq API keys usually start with 'gsk_'</span>
         </div>
         """, unsafe_allow_html=True)
-    elif GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE":
+    else: # Key is present and looks plausible
         st.markdown("""
         <div class="success-message" style="background-color: rgba(223, 240, 216, 0.4);">
             <span style="font-weight: bold; color: white;">✅ API Ready</span><br>
             <span style="color: white; opacity: 0.9;">Groq API key is configured</span>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div class="error-message" style="background-color: rgba(248, 215, 218, 0.4);">
-            <span style="font-weight: bold; color: white;">⚠️ API Key Missing</span><br>
-            <span style="color: white; opacity: 0.9;">Update the GROQ_API_KEY variable</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -652,8 +678,8 @@ with col2:
             <li><b>YouTube videos:</b> Works with any public video that has captions</li>
             <li><b>Websites:</b> Best results with news articles, blog posts and documentation</li>
             <li><b>Map-reduce:</b> Best for longer content with multiple sections</li>
-            <li><b>Stuff method:</b> Fastest for shorter content</li>
-            <li><b>Refine method:</b> Most accurate for complex topics</li>
+            <li><b>Stuff method:</b> Fastest for shorter content (check context limits)</li>
+            <li><b>Refine method:</b> Good balance for accuracy on longer texts</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
@@ -675,11 +701,10 @@ with col1:
                 # Extract and display YouTube video ID
                 video_id = extract_youtube_id(url)
                 if video_id:
-                    # CHANGE: Increased height from 315 to 450
                     st.markdown(f"""
                     <div class="success-message">
                         <div class="text-with-icon">
-                            <span>{icon} Valid {url_type} URL</span>
+                            <span>{icon} Valid {url_type} URL detected</span>
                         </div>
                     </div>
                     <iframe class="youtube-video" width="100%" height="450" src="https://www.youtube.com/embed/{video_id}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
@@ -696,7 +721,7 @@ with col1:
                 st.markdown(f"""
                 <div class="success-message">
                     <div class="text-with-icon">
-                        <span>{icon} Valid {url_type} URL</span>
+                        <span>{icon} Valid {url_type} URL detected</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -711,23 +736,38 @@ with col1:
     summarize_button = st.button("Summarize Content ✨", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Define summarization prompts
-    map_prompt = PromptTemplate(
-        template=f"Summarize this content in a detailed summary:\n\n{{text}}\n\nSUMMARY:",
-        input_variables=["text"]
-    )
+    # Define summarization prompts dynamically based on slider
+    # Note: Prompt engineering can significantly impact quality. These are basic examples.
+    if max_tokens <= 400:
+        map_template = "Briefly summarize the key points of this section:\n\n{text}\n\nCONCISE SUMMARY:"
+        combine_template = "Combine these brief summaries into a single, concise overall summary of 2-3 sentences:\n\n{text}\n\nFINAL CONCISE SUMMARY:"
+    elif max_tokens <= 800:
+        map_template = "Summarize the main ideas and supporting details of this content:\n\n{text}\n\nBALANCED SUMMARY:"
+        combine_template = "Create a comprehensive summary covering the main topics from these sections:\n\n{text}\n\nFINAL BALANCED SUMMARY:"
+    else:
+        map_template = "Provide a detailed summary of this content, including specific examples or arguments:\n\n{text}\n\nDETAILED SUMMARY:"
+        combine_template = "Synthesize these detailed summaries into a thorough and in-depth final summary:\n\n{text}\n\nFINAL DETAILED SUMMARY:"
 
-    combine_prompt = PromptTemplate(
-        template=f"Create a comprehensive summary from these sections:\n\n{{text}}\n\nFINAL SUMMARY:",
-        input_variables=["text"]
-    )
+    map_prompt = PromptTemplate(template=map_template, input_variables=["text"])
+    combine_prompt = PromptTemplate(template=combine_template, input_variables=["text"])
+
 
     # Main button action
     if summarize_button:
-        if GROQ_API_KEY == "YOUR_GROQ_API_KEY_HERE":
+        # Re-check API key status before proceeding
+        is_api_key_present = GROQ_API_KEY and GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE"
+        is_api_key_plausible = is_api_key_present and GROQ_API_KEY.startswith("gsk_")
+
+        if not is_api_key_present:
             st.markdown("""
             <div class="error-message">
                 <span>⚠️ Please update the GROQ_API_KEY variable in the code with your actual API key</span>
+            </div>
+            """, unsafe_allow_html=True)
+        elif not is_api_key_plausible:
+            st.markdown("""
+            <div class="error-message">
+                <span>⚠️ API Key appears invalid. Please check the GROQ_API_KEY variable.</span>
             </div>
             """, unsafe_allow_html=True)
         elif not url:
@@ -743,38 +783,46 @@ with col1:
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Create a container for the progress
-            progress_container = st.container()
+            # Create a container for the progress and results
+            result_area = st.container()
 
-            try:
-                # Initialize LLM
-                with progress_container:
-                    st.markdown("""
+            with result_area:
+                st.markdown("""
+                <div class="info-message">
+                    <span>⏳ Starting summarization process...</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress" style="width: 5%;"></div>
+                </div>
+                """, unsafe_allow_html=True)
+                progress_bar = st.empty() # Placeholder for updating progress bar
+
+                try:
+                    # 1. Initialize LLM
+                    progress_bar.markdown("""
                     <div class="info-message">
-                        <span>🔄 Initializing AI model...</span>
+                        <span>🔄 Initializing AI model ({model_name})...</span>
                     </div>
                     <div class="progress-bar">
                         <div class="progress" style="width: 15%;"></div>
                     </div>
                     """, unsafe_allow_html=True)
-                    time.sleep(0.5)  # Small delay for visual effect
+                    time.sleep(0.5)  # Visual delay
 
                     llm = ChatGroq(
                         model=model_name,
-                        groq_api_key=GROQ_API_KEY,  # Using the predefined API key
-                        max_tokens=max_tokens  # Using the slider value here
+                        groq_api_key=GROQ_API_KEY,
+                        max_tokens=max_tokens # Control output length
                     )
 
-                # Process content based on URL type
-                is_youtube = "youtube" in url or "youtu.be" in url
+                    # 2. Process content based on URL type
+                    is_youtube = "youtube" in url or "youtu.be" in url
+                    docs = None # Initialize docs
 
-                docs = None # Initialize docs
-
-                if is_youtube:
-                    with progress_container:
-                        st.markdown("""
+                    if is_youtube:
+                        progress_bar.markdown("""
                         <div class="info-message">
-                            <span>🎬 Processing YouTube video...</span>
+                            <span>🎬 Processing YouTube video... Extracting transcript...</span>
                         </div>
                         <div class="progress-bar">
                             <div class="progress" style="width: 30%;"></div>
@@ -788,35 +836,30 @@ with col1:
                                 <span>⚠️ Could not extract YouTube video ID</span>
                             </div>
                             """, unsafe_allow_html=True)
-                            st.stop() # Stop execution if no video ID
-                        else:
-                            transcript = get_youtube_transcript(video_id)
-                            if transcript:
-                                st.markdown(f"""
-                                <div class="success-message">
-                                    <span>✅ Successfully retrieved transcript ({len(transcript)} characters)</span>
-                                </div>
-                                <div class="progress-bar">
-                                    <div class="progress" style="width: 45%;"></div>
-                                </div>
-                                """, unsafe_allow_html=True)
+                            st.stop()
 
-                                docs = [Document(
-                                    page_content=transcript,
-                                    metadata={"source": url}
-                                )]
-                            else:
-                                st.markdown("""
-                                <div class="error-message">
-                                    <span>❌ Could not retrieve transcript</span>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                st.stop() # Stop execution if no transcript
-                else: # Website
-                    with progress_container:
-                        st.markdown("""
+                        # --- Call the updated get_youtube_transcript function ---
+                        transcript = get_youtube_transcript(video_id)
+                        # --- ---
+
+                        if transcript:
+                            progress_bar.markdown(f"""
+                            <div class="success-message">
+                                <span>✅ Transcript retrieved ({len(transcript):,} characters).</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress" style="width: 45%;"></div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            docs = [Document(page_content=transcript, metadata={"source": url})]
+                        else:
+                            # Error messages are now handled inside get_youtube_transcript
+                            st.stop() # Stop if transcript fetching failed
+
+                    else: # Website
+                        progress_bar.markdown("""
                         <div class="info-message">
-                            <span>🌐 Loading website content...</span>
+                            <span>🌐 Loading and parsing website content...</span>
                         </div>
                         <div class="progress-bar">
                             <div class="progress" style="width: 30%;"></div>
@@ -826,15 +869,16 @@ with col1:
                         try:
                             loader = UnstructuredURLLoader(
                                 urls=[url],
-                                ssl_verify=False,
+                                ssl_verify=False, # Keep SSL verification off as in original code
                                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
                             )
-                            loaded_docs = loader.load() # Use a different variable name
-                            if loaded_docs:
-                                docs = loaded_docs # Assign to docs if successful
-                                st.markdown(f"""
+                            loaded_docs = loader.load()
+                            if loaded_docs and loaded_docs[0].page_content: # Check if content exists
+                                docs = loaded_docs
+                                total_chars_loaded = sum(len(d.page_content) for d in docs)
+                                progress_bar.markdown(f"""
                                 <div class="success-message">
-                                    <span>✅ Website content loaded ({len(docs)} elements)</span>
+                                    <span>✅ Website content loaded ({len(docs)} element(s), {total_chars_loaded:,} characters).</span>
                                 </div>
                                 <div class="progress-bar">
                                     <div class="progress" style="width: 45%;"></div>
@@ -843,30 +887,23 @@ with col1:
                             else:
                                 st.markdown("""
                                 <div class="error-message">
-                                    <span>❌ No content found on website</span>
+                                    <span>❌ No text content found on the website or failed to parse.</span>
                                 </div>
                                 """, unsafe_allow_html=True)
-                                st.stop() # Stop execution if no content
+                                st.stop()
                         except Exception as e:
                             st.markdown(f"""
                             <div class="error-message">
                                 <span>❌ Error loading website: {str(e)}</span>
                             </div>
                             """, unsafe_allow_html=True)
-                            st.stop() # Stop execution on error
+                            st.stop()
 
-                # Show content preview only if docs were successfully loaded
-                if docs:
-                    with st.expander("📄 Content Preview"):
-                        st.markdown('<div class="content-preview">', unsafe_allow_html=True)
-                        st.text(docs[0].page_content[:500] + "..." if len(docs[0].page_content) > 500 else docs[0].page_content)
-                        st.markdown('</div>', unsafe_allow_html=True)
-
-                    # Split into chunks if needed
-                    with progress_container:
-                        st.markdown("""
+                    # 3. Split text if docs were loaded
+                    if docs:
+                        progress_bar.markdown("""
                         <div class="info-message">
-                            <span>🔄 Processing text...</span>
+                            <span>🔄 Splitting content into manageable chunks...</span>
                         </div>
                         <div class="progress-bar">
                             <div class="progress" style="width: 60%;"></div>
@@ -874,12 +911,12 @@ with col1:
                         """, unsafe_allow_html=True)
 
                         text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=3000,
+                            chunk_size=3000, # Adjust if needed based on model context limits & performance
                             chunk_overlap=200
                         )
                         split_docs = text_splitter.split_documents(docs)
 
-                        # Create metrics row
+                        # Display metrics
                         col_a, col_b, col_c = st.columns(3)
                         with col_a:
                             st.markdown(f"""
@@ -888,7 +925,6 @@ with col1:
                                 <div class="metric-label">Text Chunks</div>
                             </div>
                             """, unsafe_allow_html=True)
-
                         with col_b:
                             character_count = sum(len(doc.page_content) for doc in split_docs)
                             st.markdown(f"""
@@ -897,7 +933,6 @@ with col1:
                                 <div class="metric-label">Characters</div>
                             </div>
                             """, unsafe_allow_html=True)
-
                         with col_c:
                             word_count = sum(len(doc.page_content.split()) for doc in split_docs)
                             st.markdown(f"""
@@ -907,79 +942,94 @@ with col1:
                             </div>
                             """, unsafe_allow_html=True)
 
-                        st.markdown(f"""
+                        # Content Preview Expander
+                        with st.expander("📄 Content Preview (First 500 Characters)"):
+                             st.markdown('<div class="content-preview">', unsafe_allow_html=True)
+                             preview_text = docs[0].page_content[:500]
+                             st.text(preview_text + "..." if len(docs[0].page_content) > 500 else preview_text)
+                             st.markdown('</div>', unsafe_allow_html=True)
+
+                        progress_bar.markdown("""
                         <div class="progress-bar">
-                            <div class="progress" style="width: 75%;"></div>
+                           <div class="progress" style="width: 70%;"></div>
                         </div>
                         """, unsafe_allow_html=True)
 
-                    # Summarize
-                    with progress_container:
-                        st.markdown(f"""
+
+                        # 4. Summarize
+                        progress_bar.markdown(f"""
                         <div class="info-message">
-                            <span>🧠 Summarizing with {chain_type} method...</span>
+                            <span>🧠 Generating summary using '{chain_type}' method... (This may take a moment)</span>
                         </div>
                         <div class="progress-bar">
-                            <div class="progress" style="width: 85%;"></div>
+                            <div class="progress" style="width: 80%;"></div>
                         </div>
                         """, unsafe_allow_html=True)
 
+                        # Select the appropriate chain type
                         if chain_type == "map_reduce":
                             chain = load_summarize_chain(
                                 llm,
                                 chain_type="map_reduce",
                                 map_prompt=map_prompt,
-                                combine_prompt=combine_prompt
+                                combine_prompt=combine_prompt,
+                                verbose=False # Set to True for debugging map/reduce steps
                             )
                         elif chain_type == "stuff":
-                            # Check if content is too large for 'stuff'
+                            # Basic check for 'stuff' method length limit (very approximate)
                             total_chars = sum(len(d.page_content) for d in split_docs)
-                            # Estimate tokens (rough estimate, depends on model)
-                            est_tokens = total_chars / 4
-                            # Find context window for model (approximate)
-                            context_window = 8192 if model_name == "llama3-8b-8192" else 32768 if model_name == "mixtral-8x7b-32768" else 8192 # Default for gemma
-                            
-                            if est_tokens > (context_window * 0.9): # Leave some buffer
-                                st.warning(f"Content might be too long ({est_tokens:.0f} estimated tokens) for the 'stuff' method with {model_name}. Consider 'map_reduce' or 'refine'. Attempting anyway...")
+                            est_tokens = total_chars / 4 # Rough estimate
+                            context_window = 8192 if model_name == "llama3-8b-8192" else 32768 if model_name == "mixtral-8x7b-32768" else 8192 # Gemma approx
+
+                            if est_tokens > (context_window * 0.85): # Leave buffer
+                                st.warning(f"Content might be too long (~{est_tokens:.0f} tokens) for the 'stuff' method with {model_name}'s context window (~{context_window}). Summarization might fail or be truncated. Consider 'map_reduce' or 'refine'.")
 
                             chain = load_summarize_chain(
                                 llm,
-                                chain_type="stuff"
+                                chain_type="stuff",
+                                prompt=map_prompt, # 'stuff' uses a single prompt
+                                verbose=False
                             )
                         else:  # refine
                             chain = load_summarize_chain(
                                 llm,
-                                chain_type="refine"
+                                chain_type="refine",
+                                question_prompt=map_prompt, # Refine uses prompts differently
+                                refine_prompt=combine_prompt,
+                                verbose=False
                             )
 
                         try:
-                            # Show a loading animation
-                            with st.spinner("AI is generating your summary..."):
+                            # Execute the chain within a spinner
+                            with st.spinner(f"🤖 AI ({model_name}) is working on the summary..."):
+                                start_time = time.time()
                                 result = chain.invoke({"input_documents": split_docs})
+                                end_time = time.time()
+                                summary_time_taken = end_time - start_time
 
-                            st.markdown(f"""
+                            progress_bar.markdown(f"""
                             <div class="success-message">
-                                <span>✅ Summarization complete!</span>
+                                <span>✅ Summarization complete! (Took {summary_time_taken:.2f} seconds)</span>
                             </div>
                             <div class="progress-bar">
                                 <div class="progress" style="width: 100%;"></div>
                             </div>
                             """, unsafe_allow_html=True)
 
-                            # Show summary in a nice card
+                            # Display the summary
                             st.markdown('<div class="summary-container">', unsafe_allow_html=True)
-                            st.subheader("📝 Summary")
-                            st.markdown(result["output_text"]) # Use markdown for potential formatting
+                            st.subheader("📝 Generated Summary")
+                            st.markdown(result["output_text"]) # Use markdown for better formatting
 
-                            # Add metadata about the summary
+                            # Add metadata
                             summary_word_count = len(result["output_text"].split())
-                            summary_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                            content_type = "YouTube Video" if is_youtube else "Website"
+                            gen_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                            content_type_display = "YouTube Video" if is_youtube else "Website"
 
                             st.markdown(f"""
                             <hr>
-                            <p style="text-align: right; font-size: 0.9rem;">
-                                {summary_word_count} words | {content_type} | Model: {model_name} | Method: {chain_type} | Generated: {summary_time}
+                            <p style="text-align: right; font-size: 0.9rem; color: #555;">
+                                ~{summary_word_count} words | {content_type_display} | Model: {model_name} | Method: {chain_type} | Max Tokens: {max_tokens} | Generated: {gen_time_str}
                             </p>
                             """, unsafe_allow_html=True)
                             st.markdown('</div>', unsafe_allow_html=True)
@@ -990,11 +1040,12 @@ with col1:
                                 <span>❌ Summarization failed: {str(e)}</span>
                             </div>
                             """, unsafe_allow_html=True)
-                            st.error("Try using a different model, summarization method, or check the content length.")
+                            st.error("Suggestions: Try a different model (e.g., one with a larger context window like Mixtral if using 'stuff' on long text), use the 'map_reduce' or 'refine' method, shorten the summary length, or check the input URL content.")
 
-            except Exception as e:
-                st.markdown(f"""
-                <div class="error-message">
-                    <span>❌ An unexpected error occurred: {str(e)}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                except Exception as e:
+                    # Catch errors happening before summarization (e.g., LLM init)
+                    st.markdown(f"""
+                    <div class="error-message">
+                        <span>❌ An unexpected error occurred during setup: {str(e)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
