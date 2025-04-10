@@ -3,9 +3,9 @@ validators
 langchain
 langchain-groq
 langchain-community
-unstructured 
-lxml         
+unstructured
+lxml
 youtube-transcript-api
-requests     
-beautifulsoup4 
-urllib3      
+requests
+beautifulsoup4
+urllib3
